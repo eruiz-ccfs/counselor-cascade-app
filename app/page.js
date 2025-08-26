@@ -1,7 +1,9 @@
+'use client';
+
 import React, { useState } from 'react';
 import { MessageCircle, Book, Heart, Brain, Stethoscope, FileText, Download } from 'lucide-react';
 
-const CounselorCascade = () => {
+export default function CounselorCascade() {
   const [step, setStep] = useState(1);
   const [conversation, setConversation] = useState([]);
   const [currentInput, setCurrentInput] = useState('');
@@ -401,5 +403,3 @@ ${conversationHistory}`;
     </div>
   );
 };
-
-export default CounselorCascade;
