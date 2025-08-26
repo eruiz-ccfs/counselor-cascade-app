@@ -1,0 +1,405 @@
+import React, { useState } from 'react';
+import { MessageCircle, Book, Heart, Brain, Stethoscope, FileText, Download } from 'lucide-react';
+
+const CounselorCascade = () => {
+  const [step, setStep] = useState(1);
+  const [conversation, setConversation] = useState([]);
+  const [currentInput, setCurrentInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [showApiInput, setShowApiInput] = useState(true);
+  const [questionType, setQuestionType] = useState('best-judgment');
+  const [executiveSummary, setExecutiveSummary] = useState('');
+
+  const questionTypes = [
+    { value: 'theological', label: 'Theological', icon: Book },
+    { value: 'practical', label: 'Practical', icon: Brain },
+    { value: 'heart-level', label: 'Heart-level', icon: Heart },
+    { value: 'systematic', label: 'Systematic/Clinical', icon: Stethoscope },
+    { value: 'best-judgment', label: 'Best Judgment', icon: MessageCircle }
+  ];
+
+  const callAnthropicAPI = async (prompt) => {
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-sonnet-20240229",
+          max_tokens: 1000,
+          messages: [{ role: "user", content: prompt }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.content[0].text;
+    } catch (error) {
+      console.error("Error calling Anthropic API:", error);
+      throw error;
+    }
+  };
+
+  const getSystemPrompt = () => {
+    return `You are an AI assistant designed to help Christian counselors reflect deeply on their cases through a structured dialogue process. Your responses must align with historic Christian orthodoxy, particularly Reformed theology as expressed in the Westminster Confession of Faith, Larger and Shorter Catechisms, and the Nicene and Apostles' Creeds.
+
+Your Theological Framework:
+- Scripture is the ultimate authority for all matters of faith and practice
+- Humans are image-bearers of God, fallen in sin, and redeemed through Christ alone
+- The gospel (death, burial, and resurrection of Christ) is central to all lasting heart change
+- Sin affects every aspect of human nature (total depravity) but does not erase the image of God
+- Sanctification involves both divine grace and human responsibility
+- The Holy Spirit is the ultimate agent of change in counseling
+- Biblical anthropology should inform all case conceptualization
+
+Your Role:
+- Serve as both a thinking partner and gentle biblical accountability partner
+- Ask penetrating questions that help counselors think more deeply
+- Provide gentle pushback when responses deviate from biblical foundations
+- Challenge assumptions that minimize sin, sidestep the gospel, or rely primarily on technique over dependence on God
+- Identify heart-level/worship issues beneath surface behaviors
+- Maintain pastoral tone while being theologically precise`;
+  };
+
+  const buildPrompt = (userInput, currentStep, preferredType) => {
+    const systemPrompt = getSystemPrompt();
+    const conversationHistory = conversation.map(entry => 
+      `${entry.role === 'user' ? 'Counselor' : 'AI'}: ${entry.content}`
+    ).join('\n\n');
+
+    let stepInstructions = '';
+    
+    if (currentStep === 2 || currentStep === 4 || currentStep === 6) {
+      const round = Math.floor(currentStep / 2);
+      const typeInstruction = preferredType === 'best-judgment' 
+        ? 'choose what seems most needed' 
+        : `focus on ${preferredType} questions`;
+        
+      stepInstructions = `
+      This is Round ${round} of questioning. Based on the counselor's response, provide:
+      1. Two critical follow-up questions (clearly label the type: Theological, Practical, Heart-level, or Systematic/Clinical) - ${typeInstruction}
+      2. Any gentle pastoral pushback if biblical concerns are detected
+      3. Ask for next question type preference: "What type of questions would be most helpful next? Reply with: (T) Theological, (P) Practical, (H) Heart-level, or (S) Systematic/Clinical - or say 'Best judgment' and I'll choose."
+      
+      Keep responses concise and focused.`;
+    } else if (currentStep === 8) {
+      stepInstructions = `
+      This is the final step. Provide:
+      1. Conversation Summary: Synthesize key insights that emerged
+      2. Biblical Passages for Further Reflection: 3-4 relevant Scripture passages with brief explanations
+      3. Considerations for Prayerful Reflection: Tentative action plan framed as suggestions
+      4. Pastoral Encouragement: Four sentences of biblical encouragement
+      
+      Ensure all recommendations align with the centrality of the gospel and primacy of Scripture.`;
+    }
+
+    return `${systemPrompt}
+
+${conversationHistory ? 'Previous Conversation:\n' + conversationHistory + '\n\n' : ''}
+
+Current Counselor Input: ${userInput}
+
+${stepInstructions}`;
+  };
+
+  const handleSubmit = async () => {
+    if (!currentInput.trim()) return;
+
+    setLoading(true);
+    
+    try {
+      // Add user input to conversation
+      const newConversation = [...conversation, { role: 'user', content: currentInput }];
+      setConversation(newConversation);
+
+      // Generate AI response
+      const prompt = buildPrompt(currentInput, step, questionType);
+      const aiResponse = await callAnthropicAPI(prompt);
+      
+      // Add AI response to conversation
+      setConversation([...newConversation, { role: 'ai', content: aiResponse }]);
+      
+      // Move to next step
+      if (step < 8) {
+        setStep(step + 1);
+      }
+      
+      setCurrentInput('');
+      setQuestionType('best-judgment');
+    } catch (error) {
+      alert('Error: ' + error.message);
+    }
+    
+    setLoading(false);
+  };
+
+  const generateExecutiveSummary = async () => {
+    if (step < 8) return;
+    
+    setLoading(true);
+    
+    try {
+      const conversationHistory = conversation.map(entry => 
+        `${entry.role === 'user' ? 'Counselor' : 'AI'}: ${entry.content}`
+      ).join('\n\n');
+
+      const summaryPrompt = `${getSystemPrompt()}
+
+Based on this complete counseling reflection dialogue, create a concise, professional executive summary (150-250 words) suitable for chart notes or colleague consultation that includes:
+- Brief case overview and primary concerns
+- Key insights discovered through the reflection process
+- Theological/biblical considerations identified
+- Proposed interventions or next steps
+
+Format this for professional documentation while maintaining confidentiality.
+
+Complete Dialogue:
+${conversationHistory}`;
+
+      const summary = await callAnthropicAPI(summaryPrompt);
+      setExecutiveSummary(summary);
+    } catch (error) {
+      alert('Error generating summary: ' + error.message);
+    }
+    
+    setLoading(false);
+  };
+
+  const resetSession = () => {
+    setStep(1);
+    setConversation([]);
+    setCurrentInput('');
+    setExecutiveSummary('');
+    setQuestionType('best-judgment');
+  };
+
+  const downloadSummary = () => {
+    if (!executiveSummary) return;
+    
+    const element = document.createElement('a');
+    const file = new Blob([executiveSummary], { type: 'text/plain' });
+    element.href = URL.createObjectURL(file);
+    element.download = `counseling-summary-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  const getStepTitle = () => {
+    if (step === 1) return "Step 1: Initial Case Presentation";
+    if (step === 8) return "Step 8: Comprehensive Summary and Guidance";
+    if (step % 2 === 0) return `Step ${step}: Round ${step/2} Questions`;
+    return `Step ${step}: Your Response to Round ${Math.floor(step/2)} Questions`;
+  };
+
+  const getStepInstructions = () => {
+    if (step === 1) {
+      return "Share 4-5 sentences about your counseling situation. Include whatever feels relevant - the presenting problem, your observations, areas of confusion, or preliminary thoughts.";
+    }
+    if (step % 2 === 1 && step > 1 && step < 8) {
+      return "Answer the two questions specifically. If uncertain, respond with what initially comes to mind or explain what's making this difficult.";
+    }
+    return "The AI will provide follow-up questions and any necessary pastoral feedback.";
+  };
+
+  if (showApiInput) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+        <div className="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
+          <div className="text-center mb-6">
+            <Book className="mx-auto h-12 w-12 text-indigo-600 mb-3" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Biblical Counselor Reflection Cascade</h1>
+            <p className="text-gray-600 text-sm">AI-assisted case reflection tool for Christian counselors</p>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Enter your Anthropic API Key
+              </label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="sk-ant-..."
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Your API key is stored locally and never shared
+              </p>
+            </div>
+            
+            <button
+              onClick={() => apiKey.trim() && setShowApiInput(false)}
+              disabled={!apiKey.trim()}
+              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Reflection Process
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Book className="h-8 w-8 text-indigo-600" />
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Biblical Counselor Reflection Cascade</h1>
+                <p className="text-gray-600">{getStepTitle()}</p>
+              </div>
+            </div>
+            <button
+              onClick={resetSession}
+              className="text-sm text-indigo-600 hover:text-indigo-800"
+            >
+              New Session
+            </button>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
+          <div className="flex items-center space-x-2 mb-2">
+            <span className="text-sm font-medium text-gray-700">Progress:</span>
+            <span className="text-sm text-gray-600">Step {step} of 8</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${(step / 8) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Conversation History */}
+        {conversation.length > 0 && (
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-6 max-h-96 overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Conversation History</h3>
+            <div className="space-y-4">
+              {conversation.map((entry, index) => (
+                <div key={index} className={`${entry.role === 'user' ? 'bg-blue-50' : 'bg-gray-50'} p-4 rounded-lg`}>
+                  <div className="font-medium text-sm text-gray-700 mb-2">
+                    {entry.role === 'user' ? 'You:' : 'AI Assistant:'}
+                  </div>
+                  <div className="text-gray-900 whitespace-pre-wrap">{entry.content}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Current Step Input */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">{getStepTitle()}</h3>
+          <p className="text-gray-600 mb-4">{getStepInstructions()}</p>
+          
+          {step % 2 === 0 && step > 1 && step < 8 && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                What type of questions would be most helpful?
+              </label>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {questionTypes.map((type) => {
+                  const IconComponent = type.icon;
+                  return (
+                    <button
+                      key={type.value}
+                      onClick={() => setQuestionType(type.value)}
+                      className={`flex items-center space-x-2 p-2 rounded-md text-sm ${
+                        questionType === type.value
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <IconComponent className="h-4 w-4" />
+                      <span className="hidden sm:block">{type.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <textarea
+            value={currentInput}
+            onChange={(e) => setCurrentInput(e.target.value)}
+            placeholder={step === 1 ? "Describe your counseling situation..." : "Your response..."}
+            className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            disabled={loading || step > 8}
+          />
+          
+          <button
+            onClick={handleSubmit}
+            disabled={loading || !currentInput.trim() || step > 8}
+            className="mt-4 bg-indigo-600 text-white py-2 px-6 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+          >
+            {loading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span>Processing...</span>
+              </>
+            ) : (
+              <span>{step < 8 ? 'Continue' : 'Complete Reflection'}</span>
+            )}
+          </button>
+        </div>
+
+        {/* Executive Summary Section */}
+        {step >= 8 && (
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Executive Summary</h3>
+              <div className="flex space-x-2">
+                {!executiveSummary && (
+                  <button
+                    onClick={generateExecutiveSummary}
+                    disabled={loading}
+                    className="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2 text-sm"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span>Generate Summary</span>
+                  </button>
+                )}
+                {executiveSummary && (
+                  <button
+                    onClick={downloadSummary}
+                    className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 flex items-center space-x-2 text-sm"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download</span>
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            {executiveSummary ? (
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="whitespace-pre-wrap text-gray-900">{executiveSummary}</div>
+              </div>
+            ) : (
+              <p className="text-gray-600 text-center py-8">
+                Click "Generate Summary" to create a professional executive summary for your records.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default CounselorCascade;
